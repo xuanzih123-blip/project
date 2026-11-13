@@ -1,0 +1,14 @@
+# Theos build output
+packages/
+obj/
+.theos/
+*.deb
+*.dylib
+
+# macOS
+.DS_Store
+
+# editors
+.vscode/
+.idea/
+*.swp
