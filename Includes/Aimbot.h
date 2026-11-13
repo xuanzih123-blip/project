@@ -35,15 +35,28 @@ namespace aim {
 
 static const float kRad2Deg = 57.29577951308232f;
 
-// FILL: XPose offset on the shadow base. The reference build reads
-// shadowBase + XPose and treats the value 8 as "knocked down".
-// 0 disables the knocked filter, the dead check still applies.
-static constexpr uint64_t kShadowBaseOffset = 0;      // FILL
-static constexpr uint64_t kXPoseOffset      = 0;      // FILL
+// Knocked (alive but on the floor): shadow base -> XPose == 8.
+static constexpr uint64_t kShadowBaseOffset = off::Player_ShadowBase;   // 0x1A60
+static constexpr uint64_t kXPoseOffset      = off::XPose;               // 0x78
 
-// FILL: aim rotation field on the local player (reference: Offsets::AimRotation).
-// 0 = call the game's set_aim() instead of writing the field directly.
-static constexpr uint64_t kAimRotationOffset = 0;     // FILL
+// Aim rotation field on the local player.
+static constexpr uint64_t kAimRotationOffset = off::AimRotation;        // 0x440
+
+// Field that holds the collider the weapon traces against. The reference
+// build calls it guna; this dump calls the same offset AimbotVisible.
+//   kLocalAimTargetField  the local player's field. Writing the ENEMY's head
+//                         collider here aims the local weapon at their head
+//                         without moving the camera.
+//   kEntityAimTargetField the entity's own field. This is the reference's
+//                         exact behaviour: the entity is pointed at its own
+//                         head collider.
+static constexpr uint64_t kLocalAimTargetField  = off::AimbotVisible;  // 0x4E8
+static constexpr uint64_t kEntityAimTargetField = off::AimbotVisible;  // 0x4E8
+
+// Main camera transform on the local player. The dump says 0x28C, the project
+// has been reading 0x390; both are tried.
+static constexpr uint64_t kMainCameraTransformOffset = off::MainCameraTransform; // 0x28C
+static constexpr uint64_t kFallbackCameraTransformOffset = 0x390;
 
 // Physics layer mask for the line-of-sight ray (same value the project already used).
 static constexpr unsigned int kRayLayerMask = 12;
@@ -113,7 +126,8 @@ static inline bool IsSameTeam(void *entity) {
 
 static inline bool CameraPosition(void *local, Vector3 &out) {
     if (!local || !game_sdk->get_position) return false;
-    void *camTF = *(void **)((uint64_t)local + 0x390);
+    void *camTF = *(void **)((uint64_t)local + kMainCameraTransformOffset);
+    if (!camTF) camTF = *(void **)((uint64_t)local + kFallbackCameraTransformOffset);
     if (!camTF) return false;
     out = game_sdk->get_position(camTF);
     return !(out.x == 0.0f && out.y == 0.0f && out.z == 0.0f);
@@ -142,6 +156,42 @@ static inline bool HeadWorldPosition(void *entity, Vector3 &out) {
     if (!tf) return false;
     out = game_sdk->get_position(tf);
     return !(out.x == 0.0f && out.y == 0.0f && out.z == 0.0f);
+}
+
+// ---------------------------------------------------------------------------
+// head collider: pointer and world position
+// The reference build reads the collider pointer straight out of the entity
+// (entity + 0x4a4) and points an entity at it. Here the SDK hands it over as
+// a getter, 0x4A1A9D4.
+// ---------------------------------------------------------------------------
+
+static inline void *HeadCollider(void *entity) {
+    if (!entity) return nullptr;
+    void *col = *(void **)((uint64_t)entity + off::HeadCollider);   // 0x360
+    if (!col) col = Player_GetHeadCollider(entity);                 // SDK getter fallback
+    return col;
+}
+
+static inline bool HeadColliderPosition(void *entity, Vector3 &out) {
+    void *col = HeadCollider(entity);
+    if (!col) return false;
+    if (!game_sdk->Component_GetTransform) return false;
+    void *tf = game_sdk->Component_GetTransform(col);
+    if (!tf) return false;
+    out = Transform_INTERNAL_GetPosition(tf);
+    return !(out.x == 0.0f && out.y == 0.0f && out.z == 0.0f);
+}
+
+// Point an entity at a collider by writing the pointer into its aim field.
+// The reference does this eleven times in a row; the repeated write is what
+// beats the game's own update of that field.
+static inline bool WriteAimCollider(void *entity, uint64_t fieldOffset, void *collider) {
+    if (!entity || !collider || fieldOffset == 0) return false;
+    uint32_t value = (uint32_t)(uintptr_t)collider;
+    uint32_t *slot = (uint32_t *)((uint64_t)entity + fieldOffset);
+    for (int i = 0; i < 10; i++) *slot = value;
+    *slot = value;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +299,71 @@ static inline bool FindTarget(void *match, void *local, Target &best) {
 }
 
 // ---------------------------------------------------------------------------
+// Aim Visible target search.
+//
+// Reference build, FindBestTarget, kept in the same order:
+//   dead -> knocked -> project the head -> reject off screen -> distance gate
+//        -> closest to the crosshair, inside the pixel FOV
+// The FOV here is a radius in screen pixels, not an angle, and the selection
+// uses the head bone position the same way the reference does.
+// ---------------------------------------------------------------------------
+
+static inline bool FindTargetVisible(void *match, void *local, Target &best) {
+    void *(*listFn)(void *) = PlayerListFn();
+    if (!listFn) return false;
+
+    monoList<void **> *players = listFn(match);
+    if (!players || !players->getItems()) return false;
+
+    Vector3 cameraPosition;
+    if (!CameraPosition(local, cameraPosition)) return false;
+
+    ScreenMetrics screen = GetScreenMetrics();
+    float cx = screen.width  * 0.5f;
+    float cy = screen.height * 0.5f;
+
+    best.entity        = nullptr;
+    best.headPos       = Vector3();
+    best.crosshairDist = FLT_MAX;
+    best.distance      = 0.0f;
+
+    int count = players->getSize();
+    if (count > 256) count = 256;
+
+    for (int j = 0; j < count; j++) {
+        void *entity = players->getItems()[j];
+        if (!entity || entity == local) continue;
+
+        if (IsDead(entity)) continue;
+        if (Vars.IgnoreKnocked && IsKnocked(entity)) continue;
+        if (IsSameTeam(entity)) continue;
+
+        Vector3 headWorldPos;
+        if (!HeadWorldPosition(entity, headWorldPos)) continue;
+
+        // project the head, reject anything off screen
+        SimpleVec2 head2D = Camera$$WorldToScreen::Regular(headWorldPos);
+        if (head2D.x < 1.0f || head2D.y < 1.0f) continue;
+
+        float playerDistance = Vector3::Distance(cameraPosition, headWorldPos);
+        if (playerDistance > Vars.AimRange) continue;
+
+        float dx = head2D.x - cx;
+        float dy = head2D.y - cy;
+        float crosshairDistance = sqrtf(dx * dx + dy * dy);
+
+        if (crosshairDistance < best.crosshairDist && crosshairDistance <= Vars.AimFov) {
+            best.crosshairDist = crosshairDistance;
+            best.entity        = entity;
+            best.headPos       = headWorldPos;
+            best.distance      = playerDistance;
+        }
+    }
+
+    return best.entity != nullptr;
+}
+
+// ---------------------------------------------------------------------------
 // tick
 // ---------------------------------------------------------------------------
 
@@ -269,7 +384,9 @@ static inline void Tick(void *match, void *local) {
     }
 
     Target best;
-    if (!FindTarget(match, local, best)) {
+    bool found = Vars.AimVisible ? FindTargetVisible(match, local, best)
+                                 : FindTarget(match, local, best);
+    if (!found) {
         g_hasLastRotation = false;
         human::Reset();
         return;
@@ -278,10 +395,42 @@ static inline void Tick(void *match, void *local) {
     Vector3 cameraPosition;
     if (!CameraPosition(local, cameraPosition)) return;
 
+    // Aim Visible mode aims at the head collider, which is the point the
+    // reference build actually targets.
+    void *collider = nullptr;
+    Vector3 aimTarget = best.headPos;
+    if (Vars.AimVisible) {
+        collider = HeadCollider(best.entity);
+        Vector3 colPos;
+        if (collider && HeadColliderPosition(best.entity, colPos)) {
+            aimTarget = colPos;
+        }
+    }
+
     // line of sight against the exact point we aim at
-    if (Vars.VisibleCheck && !LineOfSight(cameraPosition, best.headPos)) {
+    if (Vars.VisibleCheck && !LineOfSight(cameraPosition, aimTarget)) {
         human::Reset();
         return;
+    }
+
+    // Field write path: the collider pointer goes straight into the aim field,
+    // eleven times. The camera does not move, the weapon traces the collider.
+    if (Vars.AimVisible && collider) {
+        bool wrote = false;
+        // the local weapon traces the enemy head: silent aim
+        if (Vars.AimWriteField) {
+            if (WriteAimCollider(local, kLocalAimTargetField, collider)) wrote = true;
+        }
+        // the reference build's exact behaviour: the entity is pointed at its
+        // own head collider
+        if (Vars.AimSelfTarget) {
+            if (WriteAimCollider(best.entity, kEntityAimTargetField, collider)) wrote = true;
+        }
+        if (wrote) {
+            human::Reset();
+            return;
+        }
+        // nothing was written: fall through to the rotation path
     }
 
     double now = human::Now();
@@ -294,11 +443,11 @@ static inline void Tick(void *match, void *local) {
     if (Vector3::Magnitude(right) < 1e-4f) right = Vector3(1, 0, 0);
     Vector3 up = Vector3::Cross(forward, right);
 
-    Vector3 aimPoint = best.headPos;
+    Vector3 aimPoint = aimTarget;
 
     // lead the target: humans aim where the target will be, not where it is
     if (Vars.AimLeadMs > 0.0f) {
-        Vector3 vel = human::TargetVelocity(best.headPos, now, dt);
+        Vector3 vel = human::TargetVelocity(aimTarget, now, dt);
         aimPoint = aimPoint + vel * (Vars.AimLeadMs / 1000.0f);
     }
 

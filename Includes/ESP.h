@@ -4,6 +4,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <substrate.h>
 
+#import "Offsets.h"
 #import "UnityTypes.h"
 #import "Vector3.h"
 #import "Vector2.h"
@@ -32,12 +33,27 @@ struct Vars_t
     bool skeleton = false;
     bool NoFog = true;
 
+    // Mods, offset backed (Includes/GameMods.h)
+    bool NoRecoil      = false;
+    bool FastSwap      = false;
+    bool FastReload    = false;
+    bool FastFire      = false;
+    bool NoReload      = false;
+    bool UnlimitedAmmo = false;
+    bool Force120FPS   = false;
+
     // Aimbot
     bool Aimbot = false;
     bool ShowFovCircle = true; 
     bool VisibleCheck = true;  
     bool IgnoreKnocked = true;  
     int AimWhen = 3;       
+
+    // Aim Visible mode (reference build: AimbotAi)
+    bool  AimVisible      = false;   // select by pixel FOV, aim at the head collider
+    float AimFov          = 150.0f;  // pixel radius around the crosshair
+    bool  AimWriteField   = false;   // local weapon traces the enemy head collider
+    bool  AimSelfTarget   = false;   // the target is pointed at its own head collider
 
     // Aimbot - ported from the reference method
     float AimHeightOffset   = 0.10f;   // reference: GetRotationToLocation(..., 0.1f, cam)
@@ -299,8 +315,19 @@ inline Vector3 GetBonePosition(void *player, void *(*transformGetter)(void *)) {
 @end
 
 
-static void *Player_GetHeadCollider(void *p)
-    { return ((void*(*)(void*))getRealOffset(0x4A1A9D4))(p); }
+// Head collider getter (reference build: entity + 0x4a4 holds the same pointer).
+// Cached so the dyld scan does not run every frame.
+static void *(*g_headColliderFn)(void *) = nullptr;
+
+static void *Player_GetHeadCollider(void *p) {
+    if (!p) return nullptr;
+    if (!g_headColliderFn) {
+        void *addr = (void *)getRealOffset(0x4A1A9D4);
+        if (!addr) return nullptr;
+        g_headColliderFn = (void *(*)(void *))addr;
+    }
+    return g_headColliderFn(p);
+}
 static Vector3 Transform_INTERNAL_GetPosition(void *tf) {
     Vector3 o = Vector3();
     ((void(*)(void*,Vector3*))getRealOffset(0x8552C10))(tf,&o);
@@ -346,6 +373,9 @@ inline bool IsGod(void *p) { return *(bool*)((uint64_t)p + 0xF4C); }
 // It replaces GetHitboxPosition / ff_isVisible / GetClosestEnemy / ProcessAimbot.
 #import "Aimbot.h"
 
+// Offset backed modifications (no recoil, fast fire, no reload, ...).
+#import "GameMods.h"
+
 @interface FOVCircleManager : NSObject
 @property (nonatomic, strong) CAShapeLayer *fovLayer;
 + (instancetype)shared;
@@ -371,7 +401,31 @@ inline bool IsGod(void *p) { return *(bool*)((uint64_t)p + 0xF4C); }
     if (_fovLayer.superlayer != view.layer) [view.layer addSublayer:_fovLayer];
     _fovLayer.frame = view.bounds;
 
-    if (!Vars.Aimbot || !Vars.ShowFovCircle || Vars.AimMaxAngleDeg <= 0.0f) {
+    if (!Vars.Aimbot || !Vars.ShowFovCircle) {
+        _fovLayer.path = nil;
+        return;
+    }
+
+    ScreenMetrics screen = GetScreenMetrics();
+    float cx = screen.width  * 0.5f;
+    float cy = screen.height * 0.5f;
+
+    // Aim Visible mode uses a pixel radius around the crosshair, same as the
+    // reference build draws it: red, 64 segments, thickness 2.
+    if (Vars.AimVisible) {
+        float r = Vars.AimFov;
+        if (r < 1.0f) { _fovLayer.path = nil; return; }
+        _fovLayer.strokeColor = [[UIColor colorWithRed:1.0 green:0.0 blue:0.0 alpha:0.8] CGColor];
+        _fovLayer.lineWidth = 2.0f;
+        _fovLayer.path = [UIBezierPath bezierPathWithOvalInRect:
+            CGRectMake(cx - r, cy - r, r * 2, r * 2)].CGPath;
+        return;
+    }
+
+    _fovLayer.strokeColor = [[UIColor whiteColor] colorWithAlphaComponent:0.85].CGColor;
+    _fovLayer.lineWidth = 1.0f;
+
+    if (Vars.AimMaxAngleDeg <= 0.0f) {
         _fovLayer.path = nil;
         return;
     }
@@ -436,6 +490,9 @@ inline void get_players()
 
         // Aimbot runs on its own module and does its own entity walk.
         aim::Tick(current_Match, local_player);
+
+        // Offset backed mods: no recoil, fast fire, fast swap, no reload.
+        mods::Apply(local_player);
 
         void *playersListAddr = (void*)getRealOffset(0x4C869DC);
         if (!playersListAddr) return;

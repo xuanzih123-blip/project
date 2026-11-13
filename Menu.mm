@@ -254,6 +254,9 @@ static void RestoreVarsFromPrefs(void) {
     Msa7 *p = [Msa7 shared];
 
     Vars.Aimbot        = [p boolFor:@"Aimbot" defaultValue:NO];
+    Vars.AimVisible      = [p boolFor:@"AimVisible" defaultValue:NO];
+    Vars.AimWriteField   = [p boolFor:@"AimWriteField" defaultValue:NO];
+    Vars.AimSelfTarget   = [p boolFor:@"AimSelfTarget" defaultValue:NO];
     Vars.HumanAim      = [p boolFor:@"HumanAim" defaultValue:YES];
     Vars.ShowFovCircle = [p boolFor:@"ShowFovCircle" defaultValue:YES];
     Vars.VisibleCheck  = [p boolFor:@"VisibleCheck" defaultValue:YES];
@@ -267,7 +270,16 @@ static void RestoreVarsFromPrefs(void) {
     Vars.Distance = [p boolFor:@"Distance" defaultValue:NO];
     Vars.skeleton = [p boolFor:@"Skeleton" defaultValue:NO];
 
+    Vars.NoRecoil      = [p boolFor:@"NoRecoil" defaultValue:NO];
+    Vars.FastFire      = [p boolFor:@"FastFire" defaultValue:NO];
+    Vars.FastSwap      = [p boolFor:@"FastSwap" defaultValue:NO];
+    Vars.FastReload    = [p boolFor:@"FastReload" defaultValue:NO];
+    Vars.NoReload      = [p boolFor:@"NoReload" defaultValue:NO];
+    Vars.UnlimitedAmmo = [p boolFor:@"UnlimitedAmmo" defaultValue:NO];
+    Vars.Force120FPS   = [p boolFor:@"Force120FPS" defaultValue:NO];
+
     Vars.AimIntervalMs   = [p floatFor:@"AimIntervalMs" defaultValue:16.0f];
+    Vars.AimFov          = [p floatFor:@"AimFov" defaultValue:150.0f];
     Vars.AimRange        = [p floatFor:@"AimRange" defaultValue:200.0f];
     Vars.AimMaxAngleDeg  = [p floatFor:@"AimMaxAngleDeg" defaultValue:0.0f];
     Vars.AimHeightOffset = [p floatFor:@"AimHeightOffset" defaultValue:0.10f];
@@ -418,6 +430,9 @@ static void RestoreVarsFromPrefs(void) {
 
             NSArray *rows = @[
                 @[@"Aimbot",          @"Aimbot"],
+                @[@"Aim Visible",     @"AimVisible"],
+                @[@"Write Collider",  @"AimWriteField"],
+                @[@"Self Target",     @"AimSelfTarget"],
                 @[@"Human Aim",       @"HumanAim"],
                 @[@"Show FOV Circle", @"ShowFovCircle"],
                 @[@"Visible Check",   @"VisibleCheck"],
@@ -430,15 +445,27 @@ static void RestoreVarsFromPrefs(void) {
                 row.frame = CGRectMake(px, y, rw, rowH);
                 row.onToggle = ^(BOOL on) {
                     [[Msa7 shared] setBool:on for:key];
-                    if ([key isEqualToString:@"Aimbot"])        Vars.Aimbot = on;
-                    if ([key isEqualToString:@"HumanAim"])      Vars.HumanAim = on;
-                    if ([key isEqualToString:@"ShowFovCircle"]) Vars.ShowFovCircle = on;
-                    if ([key isEqualToString:@"VisibleCheck"])  Vars.VisibleCheck = on;
-                    if ([key isEqualToString:@"IgnoreKnocked"]) Vars.IgnoreKnocked = on;
+                    if ([key isEqualToString:@"Aimbot"])          Vars.Aimbot = on;
+                    if ([key isEqualToString:@"AimVisible"])      Vars.AimVisible = on;
+                    if ([key isEqualToString:@"AimWriteField"])   Vars.AimWriteField = on;
+                    if ([key isEqualToString:@"AimSelfTarget"])   Vars.AimSelfTarget = on;
+                    if ([key isEqualToString:@"HumanAim"])        Vars.HumanAim = on;
+                    if ([key isEqualToString:@"ShowFovCircle"])   Vars.ShowFovCircle = on;
+                    if ([key isEqualToString:@"VisibleCheck"])    Vars.VisibleCheck = on;
+                    if ([key isEqualToString:@"IgnoreKnocked"])   Vars.IgnoreKnocked = on;
                 };
                 [_scrollView addSubview:row];
                 y += rowH + gap;
             }
+
+            ZSliderRow *fov = [[ZSliderRow alloc] initWithTitle:@"FOV (px)" min:20 max:600 value:Vars.AimFov];
+            fov.frame = CGRectMake(px, y, rw, 70);
+            fov.onChange = ^(float v) {
+                Vars.AimFov = v;
+                [[Msa7 shared] setFloat:v for:@"AimFov"];
+            };
+            [_scrollView addSubview:fov];
+            y += 70 + gap;
 
             ZSliderRow *reaction = [[ZSliderRow alloc] initWithTitle:@"Reaction (ms)" min:100 max:400 value:Vars.AimReactionMs];
             reaction.frame = CGRectMake(px, y, rw, 70);
@@ -578,42 +605,27 @@ static void RestoreVarsFromPrefs(void) {
             _tabTitleLabel.text = @"MISC";
             _tabIconView.image = ZSFImage(@"cube.box", 14);
 
-         
-            UILabel *warn = [[UILabel alloc] initWithFrame:CGRectMake(px, y, rw, 56)];
-            warn.numberOfLines = 0;
-            NSMutableAttributedString *ws = [[NSMutableAttributedString alloc] init];
-            NSDictionary *normal = @{NSForegroundColorAttributeName: [UIColor colorWithWhite:0.75 alpha:1.0], NSFontAttributeName: [UIFont systemFontOfSize:12]};
-            NSDictionary *accent = @{NSForegroundColorAttributeName: COLOR_ACCENT, NSFontAttributeName: [UIFont systemFontOfSize:12]};
-            [ws appendAttributedString:[[NSAttributedString alloc] initWithString:@"Some options in this section may " attributes:normal]];
-            [ws appendAttributedString:[[NSAttributedString alloc] initWithString:@"not be entirely safe" attributes:accent]];
-            [ws appendAttributedString:[[NSAttributedString alloc] initWithString:@".\nUse with " attributes:normal]];
-            [ws appendAttributedString:[[NSAttributedString alloc] initWithString:@"caution" attributes:accent]];
-            [ws appendAttributedString:[[NSAttributedString alloc] initWithString:@" and at " attributes:normal]];
-            [ws appendAttributedString:[[NSAttributedString alloc] initWithString:@"your own risk" attributes:accent]];
-            [ws appendAttributedString:[[NSAttributedString alloc] initWithString:@"." attributes:normal]];
-            warn.attributedText = ws;
-            warn.backgroundColor = [UIColor colorWithWhite:0.18 alpha:1.0];
-            warn.layer.cornerRadius = 10;
-            warn.clipsToBounds = YES;
-        
-            UIView *warnPad = [[UIView alloc] initWithFrame:CGRectMake(px, y, rw, 56)];
-            warnPad.backgroundColor = [UIColor colorWithWhite:0.18 alpha:1.0];
-            warnPad.layer.cornerRadius = 10;
-            warnPad.clipsToBounds = YES;
-            warn.frame = CGRectMake(12, 8, rw - 24, 40);
-            [warnPad addSubview:warn];
-            [_scrollView addSubview:warnPad];
-            y += 56 + gap;
+            // Legend for the rows that still need an offset the dump does not have.
+            UILabel *legend = [[UILabel alloc] initWithFrame:CGRectMake(px, y, rw, 34)];
+            legend.numberOfLines = 0;
+            legend.text = @"* needs an offset the dump does not carry yet";
+            legend.textColor = COLOR_SUBTEXT;
+            legend.font = [UIFont systemFontOfSize:11];
+            [_scrollView addSubview:legend];
+            y += 38 + gap;
 
             NSArray *rows = @[
                 @[@"No Recoil",        @"NoRecoil"],
+                @[@"Fast Fire",        @"FastFire"],
                 @[@"Fast Swap Weapon", @"FastSwap"],
                 @[@"Fast Reload",      @"FastReload"],
-                @[@"Fast Parachute",   @"FastParachute"],
-                @[@"Teleport (8m)",    @"Teleport"],
-                @[@"Screen Stretch",   @"ScreenStretch"],
+                @[@"No Reload",        @"NoReload"],
+                @[@"Unlimited Ammo",   @"UnlimitedAmmo"],
                 @[@"Force 120 FPS",    @"Force120FPS"],
-                @[@"Spin Player",      @"SpinPlayer"],
+                @[@"Fast Parachute *", @"FastParachute"],
+                @[@"Teleport (8m) *",  @"Teleport"],
+                @[@"Screen Stretch *", @"ScreenStretch"],
+                @[@"Spin Player *",    @"SpinPlayer"],
             ];
             for (NSArray *r in rows) {
                 BOOL st = [[Msa7 shared] boolFor:r[1]];
@@ -622,14 +634,17 @@ static void RestoreVarsFromPrefs(void) {
                 NSString *key = r[1];
                 row.onToggle = ^(BOOL on) {
                     [[Msa7 shared] setBool:on for:key];
+                    if ([key isEqualToString:@"NoRecoil"])      Vars.NoRecoil = on;
+                    if ([key isEqualToString:@"FastFire"])      Vars.FastFire = on;
+                    if ([key isEqualToString:@"FastSwap"])      Vars.FastSwap = on;
+                    if ([key isEqualToString:@"FastReload"])    Vars.FastReload = on;
+                    if ([key isEqualToString:@"NoReload"])      Vars.NoReload = on;
+                    if ([key isEqualToString:@"UnlimitedAmmo"]) Vars.UnlimitedAmmo = on;
+                    if ([key isEqualToString:@"Force120FPS"])   Vars.Force120FPS = on;
                 };
                 [_scrollView addSubview:row];
                 y += rowH + gap;
             }
-            ZSliderRow *spin = [[ZSliderRow alloc] initWithTitle:@"Spin Speed" min:10 max:360 value:180];
-            spin.frame = CGRectMake(px, y, rw, 70);
-            [_scrollView addSubview:spin];
-            y += 70 + gap;
             break;
         }
 
@@ -693,6 +708,15 @@ static void RestoreVarsFromPrefs(void) {
 
 - (void)updateMenu {
     _menuView.hidden = !MenDeal;
+
+    // No offset needed: the renderer is told to go faster. The game resets
+    // this on its own, so it is pushed every tick.
+    if (Vars.Force120FPS && mainWindow) {
+        if (@available(iOS 15.0, *)) {
+            mainWindow.layer.preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 120);
+        }
+    }
+
     get_players();
 }
 
