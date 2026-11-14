@@ -723,21 +723,31 @@ static CALayer *FindRenderLayer(CALayer *layer) {
     return nil;
 }
 
+// Force the frame rate up.
+// CAMetalLayer.preferredFrameRateRange needs a newer SDK than Theos ships,
+// so the cap is raised on UIScreen instead and the OpenGL layer is set
+// directly. Both go through KVC, so no newer header is needed. The screen
+// cap is a one way switch: once it is raised there is no way to put it back.
+static void ApplyFrameRate(UIWindow *window) {
+    @try {
+        [[UIScreen mainScreen] setValue:@120 forKey:@"maximumFramesPerSecond"];
+    } @catch (NSException *e) { }
+
+    if (!window) return;
+    CALayer *render = FindRenderLayer(window.layer);
+    if (render && ![render isKindOfClass:CAMetalLayer.class]) {
+        @try {
+            [render setValue:@120 forKey:@"preferredFramesPerSecond"];
+        } @catch (NSException *e) { }
+    }
+}
+
 - (void)updateMenu {
     _menuView.hidden = !MenDeal;
 
     // No offset needed: the renderer is told to go faster. The game resets
     // this on its own, so it is pushed every tick.
-    if (Vars.Force120FPS && mainWindow) {
-        CALayer *render = FindRenderLayer(mainWindow.layer);
-        if ([render isKindOfClass:CAMetalLayer.class]) {
-            if (@available(iOS 15.0, *)) {
-                ((CAMetalLayer *)render).preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 120);
-            }
-        } else if (render) {
-            [render setValue:@120 forKey:@"preferredFramesPerSecond"];
-        }
-    }
+    if (Vars.Force120FPS) ApplyFrameRate(mainWindow);
 
     get_players();
 }
