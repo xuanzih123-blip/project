@@ -25,13 +25,14 @@ jobs:
 
     - name: Install Theos
       run: |
-        if [ ! -d "$HOME/theos/.git" ]; then
-          git clone --depth 1 --recursive https://github.com/theos/theos.git $HOME/theos
+        THEOS_DIR="${{ github.workspace }}/../theos"
+        if [ ! -d "$THEOS_DIR/.git" ]; then
+          git clone --depth 1 --recursive https://github.com/theos/theos.git "$THEOS_DIR"
         fi
-        echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-        echo "$HOME/theos/bin" >> $GITHUB_PATH
-        brew install ldid
-        $THEOS/bin/nic.pl
+        echo "THEOS=$THEOS_DIR" >> $GITHUB_ENV
+        echo "$THEOS_DIR/bin" >> $GITHUB_PATH
+        brew list ldid >/dev/null 2>&1 || brew install ldid
+        $THEOS_DIR/bin/nic.pl
 
     - name: Build Tweak
       run: |
