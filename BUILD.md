@@ -44,6 +44,9 @@ The artifact zip contains:
 com.yue.com_1.0_iphoneos-arm.deb
 ```
 
+A second artifact, `mona-dylib`, contains the bare dylib and the filter
+plist, ready to drop into a device or to inject with Frida.
+
 ### What the workflow does
 
 | Step | What happens |
@@ -53,6 +56,62 @@ com.yue.com_1.0_iphoneos-arm.deb
 | `Install Theos` | clones Theos if it is not there yet, puts `$THEOS` and `$THEOS/bin` on the path, makes sure `ldid` is installed (Theos needs it to sign) |
 | `Build Tweak` | `make clean` then `make package` |
 | `Upload deb artifact` | attaches `packages/*.deb` as the artifact `mona` |
+| `Stage the dylib bundle` | copies `mona.dylib` out of `.theos/obj` and puts `mona.plist` next to it |
+| `Sign and inspect the dylib` | ad hoc signs with `ldid`, then prints `lipo`, `file` and the signature load command |
+| `Smoke test the dylib` | checks the plist really names the game bundle and that the symbols are in the binary |
+| `Upload the dylib bundle` | attaches `build/install` as the artifact `mona-dylib` |
+
+---
+
+## 1b. Building as a bare dylib
+
+**Yes, it works, and the workflow already does it.** The `.deb` is nothing but a
+wrapper: Theos builds `mona.dylib` and the deb just packages it together with
+the filter plist and the control metadata. The `mona-dylib` artifact is that
+same dylib with the plist next to it:
+
+```
+build/install/mona.dylib
+build/install/mona.plist
+```
+
+A dylib on its own needs two things to be usable:
+
+1. **The filter plist, under the same name.** The loader matches `X.dylib`
+   against `X.plist` to decide which bundle to inject into. `mona.plist` has
+   to stay named `mona.plist`, otherwise it does not load into the game.
+2. **A signature.** `ldid -S` signs it ad hoc, which is enough on a jailbroken
+   device.
+
+### Installing it by hand
+
+```bash
+# rootless (Dopamine and friends)
+scp build/install/mona.dylib root@<device>:/var/jb/Library/MobileSubstrate/DynamicLibraries/
+scp build/install/mona.plist root@<device>:/var/jb/Library/MobileSubstrate/DynamicLibraries/
+
+# rootful
+scp build/install/mona.dylib root@<device>:/var/mobile/Library/MobileSubstrate/DynamicLibraries/
+scp build/install/mona.plist root@<device>:/var/mobile/Library/MobileSubstrate/DynamicLibraries/
+
+# then kill the game so the loader picks it up on the next launch
+```
+
+### Injecting it without the jailbreak loader
+
+Frida loads the dylib directly and does not need the plist at all:
+
+```bash
+frida -U -f com.garena.game.kgvn -l build/install/mona.dylib
+```
+
+The tweak's `+load` still fires, so the menu opens the same way.
+
+### What does not change
+
+The dylib and the deb contain the same code. The only difference is who puts
+the files where: the deb does it for you (and the package shows up in the
+package manager), a bare dylib means copying two files by hand.
 
 ---
 

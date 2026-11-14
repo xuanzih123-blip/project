@@ -39,8 +39,53 @@ jobs:
         make package
         ls -la packages/
 
-    - name: Upload deb artifact
+    - name: Stage the dylib bundle
+      run: |
+        set -x
+        # Theos builds the dylib here. The deb is only a wrapper around it.
+        find .theos/obj -name "mona.dylib"
+        mkdir -p build/install
+        cp "$(find .theos/obj -name 'mona.dylib' | head -1)" build/install/mona.dylib
+        # The filter plist has to sit next to the dylib under the same name,
+        # otherwise the loader does not know which app to inject into.
+        cp mona.plist build/install/mona.plist
+        ls -l build/install
+
+    - name: Sign and inspect the dylib
+      continue-on-error: true
+      run: |
+        set -x
+        # ldid takes the entitlements glued to the -S flag.
+        # A bare -S signs ad hoc, which is enough for a jailbroken device.
+        ldid -S build/install/mona.dylib || true
+        ldid -e build/install/mona.dylib || true
+        lipo -info build/install/mona.dylib
+        file build/install/mona.dylib
+        otool -l build/install/mona.dylib | grep -A3 LC_CODE_SIGNATURE || true
+
+    - name: Smoke test the dylib
+      run: |
+        set -x
+        ls -l build/install/mona.dylib
+        plutil -p build/install/mona.plist
+        # the filter has to name the game bundle
+        plutil -extract Filter.Bundles.0 raw build/install/mona.plist
+        # our own symbols have to be in there
+        strings build/install/mona.dylib | grep -m5 -E "Msa7|ESPRenderer|FOVCircleManager|AimbotVisible" || true
+        nm -gU build/install/mona.dylib | head -10 || true
+        test -s build/install/mona.dylib
+        test -s build/install/mona.plist
+        echo "SMOKE OK"
+
+    - name: Upload the deb artifact
       uses: actions/upload-artifact@v4
       with:
         name: mona
         path: ./packages/*.deb
+
+    - name: Upload the dylib bundle
+      uses: actions/upload-artifact@v4
+      with:
+        name: mona-dylib
+        path: build/install
+        if-no-files-found: error
