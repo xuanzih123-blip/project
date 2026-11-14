@@ -32,7 +32,6 @@ jobs:
         echo "THEOS=$THEOS_DIR" >> $GITHUB_ENV
         echo "$THEOS_DIR/bin" >> $GITHUB_PATH
         brew list ldid >/dev/null 2>&1 || brew install ldid
-        $THEOS_DIR/bin/nic.pl
 
     - name: Build Tweak
       run: |
