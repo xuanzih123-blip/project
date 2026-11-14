@@ -233,6 +233,65 @@ is defined.
 
 ---
 
+## What the .deb actually is
+
+**It is not an app.** A `.deb` is a Debian package archive, the same format
+APT uses on Linux. It contains no executable, no `Info.plist`, no icon and
+nothing that appears on the home screen.
+
+Its whole payload is two files:
+
+```
+/var/mobile/Library/MobileSubstrate/DynamicLibraries/mona.dylib
+/var/mobile/Library/MobileSubstrate/DynamicLibraries/mona.plist
+```
+
+(rootless devices use `/var/jb/...` for the same two files)
+
+The `control` file carries package metadata for the package manager, not for
+iOS:
+
+```
+Package: com.yue.com
+Name: yue
+Depends: mobilesubstrate
+Architecture: iphoneos-arm
+Version: 1.0
+Installed-Size: 132
+```
+
+`Package: com.yue.com` looks like a bundle id but it is not one. It is the APT
+package name, the thing `dpkg -l` and `apt remove` know the package by. The
+only bundle id that matters is the one in the filter plist:
+`com.garena.game.kgvn`, the game.
+
+### What happens at runtime
+
+```
+game launches (com.garena.game.kgvn)
+  -> the tweak loader scans DynamicLibraries
+  -> it reads mona.plist, sees the Filter names that bundle
+  -> it dlopen()s mona.dylib into the game process
+  -> +load fires, waits 3 seconds, grabs the key window, draws the menu
+```
+
+The dylib is a library, not a program: it has no `main()`, it only exists
+inside the game process once something loads it. The app in this picture is
+the game. The tweak rides on it.
+
+### Deb vs dylib
+
+| | `.deb` | bare dylib |
+|---|---|---|
+| what you get | a package | two files |
+| install | `dpkg -i` | copy by hand |
+| uninstall | `apt remove com.yue.com` | delete two files |
+| dependencies | declared (`mobilesubstrate`) | you handle it |
+| shows in the package manager | yes | no |
+| code | identical | identical |
+
+---
+
 ## 4. Traps that already bit this build
 
 Keep these in mind before changing the workflow or the Makefile.
