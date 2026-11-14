@@ -93,9 +93,10 @@ typedef struct _monoString
     }
     NSString* toNSString()
     {
-      return [[NSString alloc] initWithBytes:(const void *)(chars)
-                     length:(NSUInteger)(length * 2)
-                     encoding:(NSStringEncoding)NSUTF16LittleEndianStringEncoding];
+      // ARC safe: an autoreleased string, so the caller's strong local takes
+      // ownership. [[NSString alloc] init...] returned from a C++ method hands
+      // back a dangling pointer once ARC releases it at the end of the callee.
+      return [NSString stringWithCharacters:(const unichar *)chars length:(NSUInteger)length];
     }
 
     char* toCString()
