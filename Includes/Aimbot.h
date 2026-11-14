@@ -72,15 +72,19 @@ static inline uint32_t ReadU32(uint64_t base, uint64_t offset) {
 
 // ---------------------------------------------------------------------------
 // cached player list getter, so the dyld scan runs once per process
+// A typedef, not a raw declarator: "function returning pointer to function"
+// spelled out inline gets parsed wrong.
 // ---------------------------------------------------------------------------
 
-static void *(*g_playerListFn)(void *) = nullptr;
+typedef void *(*player_list_fn_t)(void *);
 
-static inline void *(*PlayerListFn(void))(void) {
+static player_list_fn_t g_playerListFn = nullptr;
+
+static inline player_list_fn_t PlayerListFn(void) {
     if (!g_playerListFn) {
         void *addr = (void *)getRealOffset(0x4C869DC);
         if (!addr) return nullptr;
-        g_playerListFn = (void *(*)(void *))addr;
+        g_playerListFn = (player_list_fn_t)addr;
     }
     return g_playerListFn;
 }
@@ -225,10 +229,10 @@ struct Target {
 };
 
 static inline bool FindTarget(void *match, void *local, Target &best) {
-    void *(*listFn)(void *) = PlayerListFn();
+    player_list_fn_t listFn = PlayerListFn();
     if (!listFn) return false;
 
-    monoList<void **> *players = listFn(match);
+    monoList<void **> *players = (monoList<void **> *)listFn(match);
     if (!players || !players->getItems()) return false;
 
     Vector3 cameraPosition;
@@ -309,10 +313,10 @@ static inline bool FindTarget(void *match, void *local, Target &best) {
 // ---------------------------------------------------------------------------
 
 static inline bool FindTargetVisible(void *match, void *local, Target &best) {
-    void *(*listFn)(void *) = PlayerListFn();
+    player_list_fn_t listFn = PlayerListFn();
     if (!listFn) return false;
 
-    monoList<void **> *players = listFn(match);
+    monoList<void **> *players = (monoList<void **> *)listFn(match);
     if (!players || !players->getItems()) return false;
 
     Vector3 cameraPosition;

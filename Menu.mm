@@ -4,6 +4,9 @@
 #import <Foundation/Foundation.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <substrate.h>
+#if __has_include(<QuartzCore/CAMetalLayer.h>)
+#import <QuartzCore/CAMetalLayer.h>
+#endif
 
 
 #import "Includes/Vector3.h"
@@ -706,14 +709,33 @@ static void RestoreVarsFromPrefs(void) {
     _menuView.center = CGPointMake(_lastPoint.x + t.x, _lastPoint.y + t.y);
 }
 
+// The renderer layer is a CAMetalLayer on Metal builds and a CAEAGLLayer on
+// the older OpenGL builds. CALayer itself has no frame rate property, so the
+// tree has to be walked down to the layer that draws the game.
+static CALayer *FindRenderLayer(CALayer *layer) {
+    if (!layer) return nil;
+    if ([layer isKindOfClass:CAMetalLayer.class]) return layer;
+    if ([layer respondsToSelector:@selector(preferredFramesPerSecond)]) return layer;
+    for (CALayer *sub in layer.sublayers) {
+        CALayer *found = FindRenderLayer(sub);
+        if (found) return found;
+    }
+    return nil;
+}
+
 - (void)updateMenu {
     _menuView.hidden = !MenDeal;
 
     // No offset needed: the renderer is told to go faster. The game resets
     // this on its own, so it is pushed every tick.
     if (Vars.Force120FPS && mainWindow) {
-        if (@available(iOS 15.0, *)) {
-            mainWindow.layer.preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 120);
+        CALayer *render = FindRenderLayer(mainWindow.layer);
+        if ([render isKindOfClass:CAMetalLayer.class]) {
+            if (@available(iOS 15.0, *)) {
+                ((CAMetalLayer *)render).preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 120);
+            }
+        } else if (render) {
+            [render setValue:@120 forKey:@"preferredFramesPerSecond"];
         }
     }
 
